@@ -24,7 +24,7 @@ class AudioConverter:
         Returns:
             PCM audio bytes (16-bit, 8kHz)
         """
-        # Decode μ-law to linear PCM (16-bit)
+        # Here it Decode μ-law to linear PCM (16-bit)
         pcm_data = audioop.ulaw2lin(mulaw_data, Config.PCM_SAMPLE_WIDTH)
         return pcm_data
     
@@ -39,7 +39,7 @@ class AudioConverter:
         Returns:
             μ-law encoded audio bytes
         """
-        # Encode linear PCM to μ-law
+        # Here it Encode linear PCM to μ-law
         mulaw_data = audioop.lin2ulaw(pcm_data, Config.PCM_SAMPLE_WIDTH)
         return mulaw_data
     
@@ -59,7 +59,7 @@ class AudioConverter:
         if from_rate == to_rate:
             return audio_data
         
-        # Use audioop.ratecv for resampling
+        # Here it Use audioop.ratecv for resampling
         resampled, _ = audioop.ratecv(
             audio_data,
             Config.PCM_SAMPLE_WIDTH,
@@ -81,13 +81,13 @@ class AudioConverter:
         Returns:
             PCM audio bytes at 16kHz for Gemini
         """
-        # Step 1: Decode base64
+        # Step 1: Here it Decode base64
         mulaw_data = base64.b64decode(base64_payload)
         
-        # Step 2: Convert μ-law to PCM (8kHz)
+        # Step 2: Here it Convert μ-law to PCM (8kHz)
         pcm_8khz = AudioConverter.mulaw_to_pcm(mulaw_data)
         
-        # Step 3: Resample from 8kHz to 16kHz for Gemini
+        # Step 3: Here it Resample from 8kHz to 16kHz for Gemini
         pcm_16khz = AudioConverter.resample_audio(
             pcm_8khz,
             Config.TWILIO_SAMPLE_RATE,
@@ -111,17 +111,17 @@ class AudioConverter:
         if sample_rate is None:
             sample_rate = Config.GEMINI_SAMPLE_RATE
         
-        # Step 1: Resample from Gemini's rate to Twilio's 8kHz
+        # Step 1: Here it Resample from Gemini's rate to Twilio's 8kHz
         pcm_8khz = AudioConverter.resample_audio(
             pcm_data,
             sample_rate,
             Config.TWILIO_SAMPLE_RATE
         )
         
-        # Step 2: Convert PCM to μ-law
+        # Step 2: Here it Convert PCM to μ-law
         mulaw_data = AudioConverter.pcm_to_mulaw(pcm_8khz)
         
-        # Step 3: Encode to base64
+        # Step 3: Here it Encode to base64
         base64_payload = base64.b64encode(mulaw_data).decode('utf-8')
         
         return base64_payload

@@ -22,8 +22,13 @@ class Config:
     AUDIO_ENCODING = "mulaw"  # Twilio uses μ-law encoding
     PCM_SAMPLE_WIDTH = 2  # 16-bit PCM
     
-    # Gemini Configuration
-    GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+    # Vertex AI Configuration
+    VERTEX_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", os.getenv("GCP_PROJECT_ID"))
+    VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+    VERTEX_LIVE_MODEL = os.getenv(
+        "VERTEX_LIVE_MODEL",
+        "gemini-live-2.5-flash-native-audio"
+    )
     
     @classmethod
     def validate(cls):
@@ -32,6 +37,8 @@ class Config:
         
         if not cls.GOOGLE_API_KEY:
             missing.append("GOOGLE_API_KEY")
+        if not cls.VERTEX_PROJECT_ID:
+            missing.append("GOOGLE_CLOUD_PROJECT or GCP_PROJECT_ID")
         if not cls.TWILIO_ACCOUNT_SID:
             missing.append("TWILIO_ACCOUNT_SID")
         if not cls.TWILIO_AUTH_TOKEN:

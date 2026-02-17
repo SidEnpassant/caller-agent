@@ -69,6 +69,11 @@ def test_config():
         else:
             print("⚠ GOOGLE_API_KEY not set in .env")
         
+        if Config.VERTEX_PROJECT_ID:
+            print(f"✓ VERTEX_PROJECT_ID is set ({Config.VERTEX_PROJECT_ID})")
+        else:
+            print("⚠ VERTEX_PROJECT_ID not set in .env")
+        
         if Config.TWILIO_ACCOUNT_SID and Config.TWILIO_ACCOUNT_SID != "your_twilio_account_sid_here":
             print("✓ TWILIO_ACCOUNT_SID is set")
         else:
@@ -108,16 +113,16 @@ def test_audio_converter():
         print(f"✗ Error loading audio_converter: {e}")
         return False
 
-def test_gemini_client():
-    """Test Gemini client loading"""
-    print("\nTesting Gemini client...")
+def test_voice_service():
+    """Test Twilio Voice Service loading"""
+    print("\nTesting Twilio Voice Service...")
     
     try:
-        from gemini_client import GeminiClient
-        print("✓ gemini_client.py loaded")
+        from twilio_voice_service import TwilioVoiceService
+        print("✓ twilio_voice_service.py loaded")
         return True
     except Exception as e:
-        print(f"✗ Error loading gemini_client: {e}")
+        print(f"✗ Error loading twilio_voice_service: {e}")
         return False
 
 def test_server():
@@ -134,7 +139,7 @@ def test_server():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Twilio-Gemini Voice Agent - Setup Test")
+    print("Twilio-Gemini Voice Agent - Setup Test (Vertex AI)")
     print("=" * 60)
     
     all_passed = True
@@ -142,17 +147,17 @@ if __name__ == "__main__":
     all_passed &= test_imports()
     all_passed &= test_config()
     all_passed &= test_audio_converter()
-    all_passed &= test_gemini_client()
+    all_passed &= test_voice_service()
     all_passed &= test_server()
     
-    print("\n" + "=" * 60)
+    print("\n" * 60)
     if all_passed:
-        print("✅ All tests passed! Your setup is ready.")
+        print(" All tests passed! Your setup is ready.")
         print("\nNext steps:")
         print("1. Fill in your .env file with actual credentials")
         print("2. Follow SETUP_GUIDE.md for external service setup")
         print("3. Run: python server.py")
     else:
-        print("❌ Some tests failed. Please check the errors above.")
+        print(" Some tests failed. Please check the errors above.")
         sys.exit(1)
     print("=" * 60)

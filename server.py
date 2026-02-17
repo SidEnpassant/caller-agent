@@ -1,21 +1,30 @@
 import asyncio
 import json
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 import uvicorn
 from config import Config
 from audio_converter import AudioConverter
-from gemini_client import GeminiClient
+from twilio_voice_service import twilio_voice_service
 
-app = FastAPI(title="Twilio-Gemini Voice Agent")
+# Here it Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Store active sessions
-active_sessions = {}
+app = FastAPI(title="Twilio-Gemini Voice Agent (Vertex AI)")
 
 @app.get("/")
 async def root():
     """Health check endpoint"""
-    return {"status": "ok", "service": "Twilio-Gemini Voice Agent"}
+    return {
+        "status": "ok",
+        "service": "Twilio-Gemini Voice Agent",
+        "backend": "Vertex AI"
+    }
 
 @app.post("/twiml")
 async def twiml():
@@ -23,7 +32,7 @@ async def twiml():
     TwiML endpoint for Twilio to connect the call to WebSocket
     This is what you configure in your Twilio phone number settings
     """
-    # Get the WebSocket URL (you'll need to replace this with your ngrok URL)
+    # Get the WebSocket URL (we will need to replace this with our ngrok URL)
     ws_url = "wss://YOUR_NGROK_URL.ngrok.io/ws"
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -39,56 +48,20 @@ async def twiml():
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for Twilio Media Streams
-    Handles bidirectional audio streaming between Twilio and Gemini
+    Handles bidirectional audio streaming between Twilio and Gemini (Vertex AI)
     """
     await websocket.accept()
-    print("✓ WebSocket connection established with Twilio")
+    logger.info("✓ WebSocket connection established with Twilio")
     
-    # Initialize components
-    gemini_client = GeminiClient()
     stream_sid = None
-    
-    # Audio buffer for accumulating chunks
-    audio_buffer = bytearray()
+    live_session = None
+    receiver_task = None
     
     try:
-        # Start Gemini session
-        await gemini_client.start_session()
-        
-        # Define callback for Gemini audio responses
-        async def handle_gemini_audio(audio_bytes: bytes, mime_type: str):
-            """Handle audio received from Gemini and send to Twilio"""
-            try:
-                # Convert Gemini's audio to Twilio format
-                # Gemini typically sends PCM at 24kHz, we need to convert to μ-law 8kHz
-                sample_rate = 24000 if "24000" in mime_type else 16000
-                
-                base64_audio = AudioConverter.encode_for_twilio(audio_bytes, sample_rate)
-                
-                # Send to Twilio
-                if stream_sid:
-                    message = {
-                        "event": "media",
-                        "streamSid": stream_sid,
-                        "media": {
-                            "payload": base64_audio
-                        }
-                    }
-                    await websocket.send_json(message)
-                    print(f"→ Sent {len(base64_audio)} bytes to Twilio")
-                    
-            except Exception as e:
-                print(f"Error handling Gemini audio: {e}")
-        
-        # Start listening for Gemini responses
-        gemini_task = asyncio.create_task(
-            gemini_client.receive_responses(handle_gemini_audio)
-        )
-        
-        # Main loop: receive from Twilio
+        # Main loop: received from Twilio
         while True:
             try:
-                # Receive message from Twilio
+                # Received message from Twilio
                 data = await websocket.receive_text()
                 message = json.loads(data)
                 
@@ -97,89 +70,128 @@ async def websocket_endpoint(websocket: WebSocket):
                 if event == "start":
                     # Stream started
                     stream_sid = message["start"]["streamSid"]
-                    print(f"✓ Stream started: {stream_sid}")
+                    logger.info(f"✓ Stream started: {stream_sid}")
                     
-                    # Send initial greeting
-                    await gemini_client.send_text(
-                        "You are a helpful voice assistant. Greet the caller warmly."
+                    # Created Vertex AI session
+                    live_session = await twilio_voice_service.get_or_create_session(
+                        stream_sid, websocket=websocket
                     )
+                    
+                    # Started listening for Gemini responses
+                    async def stream_responses():
+                        try:
+                            async for event in live_session.receive():
+                                event_type = event.get("type")
+                                
+                                if event_type == "audio_chunk":
+                                    # Converted Gemini's audio to Twilio format
+                                    audio_bytes = event["data"]
+                                    
+                                    # Gemini sends PCM at 24kHz, converted to μ-law 8kHz
+                                    base64_audio = AudioConverter.encode_for_twilio(
+                                        audio_bytes, 
+                                        sample_rate=24000
+                                    )
+                                    
+                                    # Send to Twilio
+                                    await websocket.send_json({
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {
+                                            "payload": base64_audio
+                                        }
+                                    })
+                                    logger.debug(f"→ Sent {len(base64_audio)} bytes to Twilio")
+                                
+                                elif event_type == "turn_complete":
+                                    logger.info("✓ Gemini turn complete")
+                                
+                                elif event_type == "input_transcription":
+                                    logger.info(f"📝 User said: {event['text']}")
+                                
+                                elif event_type == "output_transcription":
+                                    logger.info(f"🤖 AI said: {event['text']}")
+                                
+                                elif event_type == "error":
+                                    logger.error(f"❌ Gemini error: {event['error']}")
+                        
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            logger.error(f"stream_responses error: {e}")
+                    
+                    receiver_task = asyncio.create_task(stream_responses())
                 
                 elif event == "media":
-                    # Audio data from caller
-                    payload = message["media"]["payload"]
-                    stream_sid = message["streamSid"]
-                    
-                    # Convert Twilio audio to Gemini format
-                    pcm_audio = AudioConverter.decode_twilio_audio(payload)
-                    
-                    # Accumulate audio in buffer
-                    audio_buffer.extend(pcm_audio)
-                    
-                    # Send chunks to Gemini (every ~100ms worth of audio)
-                    # At 16kHz, 16-bit mono: 100ms = 3200 bytes
-                    chunk_size = 3200
-                    if len(audio_buffer) >= chunk_size:
-                        chunk = bytes(audio_buffer[:chunk_size])
-                        audio_buffer = audio_buffer[chunk_size:]
+                    # Audio data from caller - streamed directly without buffering
+                    if live_session:
+                        payload = message["media"]["payload"]
                         
-                        # Send to Gemini
-                        await gemini_client.send_audio(chunk)
-                        print(f"← Received {len(payload)} bytes from Twilio, sent to Gemini")
+                        # Converted Twilio audio to Gemini format (PCM 16kHz)
+                        pcm_audio = AudioConverter.decode_twilio_audio(payload)
+                        
+                        # Sent directly to Gemini (no chunk buffering)
+                        await live_session.send_audio(pcm_audio)
+                        logger.debug(f"← Received {len(payload)} bytes from Twilio, sent to Gemini")
                 
                 elif event == "stop":
                     # Stream stopped
-                    print(f"✓ Stream stopped: {stream_sid}")
+                    logger.info(f"✓ Stream stopped: {stream_sid}")
                     break
-                
+            
             except WebSocketDisconnect:
-                print("✗ WebSocket disconnected")
+                logger.info("✗ WebSocket disconnected")
                 break
             except Exception as e:
-                print(f"Error processing message: {e}")
+                logger.error(f"Error processing message: {e}")
                 continue
     
     except Exception as e:
-        print(f"Error in WebSocket handler: {e}")
+        logger.error(f"Error in WebSocket handler: {e}")
     
     finally:
-        # Cleanup
-        print("Cleaning up session...")
+        # Cleaned up
+        logger.info("Cleaning up session...")
         
-        # Cancel Gemini listener task
-        if 'gemini_task' in locals():
-            gemini_task.cancel()
+        # Cancelled receiver task
+        if receiver_task:
+            receiver_task.cancel()
             try:
-                await gemini_task
+                await receiver_task
             except asyncio.CancelledError:
                 pass
         
-        # Close Gemini session
-        await gemini_client.close_session()
+        # Ended Gemini session
+        if stream_sid:
+            await twilio_voice_service.end_session(stream_sid)
         
-        # Close WebSocket
+        # Closed WebSocket
         try:
             await websocket.close()
         except:
             pass
         
-        print("✓ Session cleanup complete")
+        logger.info("✓ Session cleanup complete")
 
 if __name__ == "__main__":
-    # Validate configuration
+    # Validated configuration
     try:
         Config.validate()
-        print("✓ Configuration validated")
+        logger.info("✓ Configuration validated")
     except ValueError as e:
-        print(f"✗ Configuration error: {e}")
+        logger.error(f"✗ Configuration error: {e}")
         exit(1)
     
-    print(f"\n🚀 Starting Twilio-Gemini Voice Agent on {Config.HOST}:{Config.PORT}")
-    print(f"📞 WebSocket endpoint: ws://localhost:{Config.PORT}/ws")
-    print(f"📋 TwiML endpoint: http://localhost:{Config.PORT}/twiml")
-    print("\n⚠️  Remember to:")
-    print("   1. Start ngrok: ngrok http 5000")
-    print("   2. Update the ws_url in /twiml endpoint with your ngrok URL")
-    print("   3. Configure your Twilio phone number webhook\n")
+    logger.info(f"\n Starting Twilio-Gemini Voice Agent (Vertex AI)")
+    logger.info(f" Project: {Config.VERTEX_PROJECT_ID}")
+    logger.info(f" Location: {Config.VERTEX_LOCATION}")
+    logger.info(f" Model: {Config.VERTEX_LIVE_MODEL}")
+    logger.info(f" WebSocket endpoint: ws://localhost:{Config.PORT}/ws")
+    logger.info(f" TwiML endpoint: http://localhost:{Config.PORT}/twiml")
+    logger.info("\n  Remember to:")
+    logger.info("   1. Start ngrok: ngrok http 5000")
+    logger.info("   2. Update the ws_url in /twiml endpoint with your ngrok URL")
+    logger.info("   3. Configure your Twilio phone number webhook\n")
     
     uvicorn.run(
         app,
