@@ -23,7 +23,7 @@ class Config:
     PCM_SAMPLE_WIDTH = 2  # 16-bit PCM
     
     # Gemini Configuration
-    GEMINI_MODEL = "models/gemini-2.0-flash-exp"
+    GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
     
     @classmethod
     def validate(cls):
