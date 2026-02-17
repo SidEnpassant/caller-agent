@@ -1,0 +1,16 @@
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+
+# WebSocket Support
+websockets==13.1
+
+# Google Gemini API
+google-genai==0.2.2
+
+# Environment Variables
+python-dotenv==1.0.1
+
+# Audio Processing
+# audioop was removed in Python 3.13, audioop-lts is the replacement
+audioop-lts==0.2.1
